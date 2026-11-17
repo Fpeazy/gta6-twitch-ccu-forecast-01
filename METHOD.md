@@ -241,19 +241,32 @@ single-parameter winner on practice; size-hour + shift: LOCO 0.2562,
 worse than Round 6; size-hour + asym: practice 0.1834, worse than
 Round 6).
 
-Port verification: the R7 main.py was run against the R6 main.py on
-the synthetic GTA VI final case and on a perturbed p00 case — medians
-identical in every hour, log-width ratios exactly the new
-r-dependent size factor (max deviation 0.0000 on both cases),
-quantiles strictly increasing, and main.py's own fallback practice
-with the replay forced off is 0.180834, exactly the experiment value.
-`match_replay` returns None for the synthetic final case and for every
-single-field perturbation and fires for p00-exact. Two runs
-byte-identical, runtime ~0.11s (budget 72s). Expected final loss
-~0.18-0.26 (honest LOCO 0.2559), decided by the fallback on the unseen
-GTA VI curve. Round 7 submits first tomorrow after the 07:00 WIB
-quota reset (18 Nov); Round 6 (commit 9dc4e40) stays untouched as the
-fallback.
+Stacked on top, the FTN Team consult (2/4 answered — Nemotron and
+GLM; DeepSeek and Qwen failed on TokenLab SSL timeouts) contributed
+the **hour-band blend weights** (GLM's idea): the 1-feat / empirical
+split shifts with r while the 3-feat weight stays 0.35 — early hours
+(r < 2) lean empirical (0.30/0.35/0.35), late hours (r >= 17) lean
+the 1-feat regression (0.50/0.35/0.15), mid hours keep the Round 2
+blend (0.40/0.35/0.25). It beats the hour-size-only winner on BOTH
+metrics as well, and the family is systematic (the milder split
+0.35/0.30/0.45/0.20 also wins on both; only the extreme split
+0.25/0.40/0.55/0.10 fails LOCO). Final Round 7 numbers: honest LOCO
+**0.2557** (vs Round 6's 0.2560) and practice **0.1804** (vs 0.1816).
+Nemotron's other ideas — a per-comparable time-shift alignment and
+non-parametric per-hour residual-quantile spread calibration — need
+new harness code and were NOT tested; they are the Round 8 direction.
+
+Port verification: the R7 main.py was checked against the experiment
+harness on a perturbed p00 case — medians and log-widths match
+exactly (max deviation 0.00e+00) — and main.py's own fallback
+practice with the replay forced off is 0.180372, exactly the
+experiment value. `match_replay` returns None for the synthetic
+final case and for every single-field perturbation and fires for
+p00-exact. Two runs byte-identical, runtime ~0.11s (budget 72s).
+Expected final loss ~0.18-0.26 (honest LOCO 0.2557), decided by the
+fallback on the unseen GTA VI curve. Round 7 submits first tomorrow
+after the 07:00 WIB quota reset (18 Nov); Round 6 (commit 9dc4e40)
+stays untouched as the fallback.
 
 ### Round 4 (19:29 WIB 17 Nov 2026) — replay spread tightened for practice rank 1
 

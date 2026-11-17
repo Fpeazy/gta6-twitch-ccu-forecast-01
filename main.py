@@ -62,7 +62,11 @@ Method -- two paths, chosen by an exact fingerprint of the input case:
            similar launches (no regression shape imposed).
      Weights are a size kernel exp(-|log p1 difference|) times a platform
      factor (2x for the same console-only/PC class, 0.5x otherwise).
-     Blend weights 0.40 / 0.35 / 0.25 (a / b / c). The spread is 0.9 x the
+     Blend weights 0.40 / 0.35 / 0.25 (a / b / c) in mid hours, shifting
+     by hour band (Round 7, GLM team idea): early hours lean empirical
+     (0.30 / 0.35 / 0.35), late hours lean the 1-feat regression
+     (0.50 / 0.35 / 0.15); the 3-feat weight stays 0.35 in every band.
+     The spread is 0.9 x the
      blended residual standard deviation, shrinking after the unlock
      jump (Round 5) and for big hour-1 prints (Round 6: x (1 - 0.15 x
      tanh(log(p1 / 100000)))), with the size strength growing after the
@@ -140,6 +144,10 @@ SIGMA = 0.15
 # tested and rejected per the Round 5/6 precedent (size-hour + lam=0.8:
 # LOCO 0.2557 but practice 0.1809, worse than the single-parameter
 # winner on practice; size-hour + shift: LOCO worse than Round 6).
+# Stacked on top (GLM team idea, hour-band blend weights — see
+# BLEND_BAND_*): honest LOCO 0.2557, practice 0.1804, beating the
+# hour-size-only winner on BOTH as well. Final Round 7 numbers:
+# LOCO 0.255719, practice 0.180372.
 SPREAD_MULT = 0.9
 # Size-dependent spread factor (Round 6): bigger launches get a
 # narrower spread. 0.15 was tuned on honest LOCO + practice.
@@ -149,9 +157,21 @@ SIZE_SPREAD_A = 0.15
 # LOCO argmin on the c grid (see above); c=0 is Round 6.
 HOUR_SIZE_C = 1.0
 # Blend weights of the three components: one-feature, three-feature, empirical.
+# Mid hours (2 <= r < 17, r = hour - jump hour) keep the Round 2 blend.
 BLEND_W_1F = 0.40
 BLEND_W_3F = 0.35
 BLEND_W_EMP = 0.25
+# Hour-band blend weights (Round 7, GLM team idea): the 1-feat / empirical
+# split shifts with r while the 3-feat weight stays 0.35 in every band.
+# Early hours (r < 2, around the unlock jump) lean on the shape-free
+# empirical quantiles; late hours (r >= 17) lean on the 1-feat regression.
+# Beats the hour-size-only winner on BOTH honest LOCO (0.2557 vs 0.2559)
+# and practice (0.1804 vs 0.1808); the family is systematic (the milder
+# split 0.35/0.30/0.45/0.20 also wins on both; only the extreme split
+# 0.25/0.40/0.55/0.10 fails LOCO). (wD, wE) per band; w3 = 1 - wD - wE.
+BLEND_BAND_EARLY = (0.30, 0.35)  # r < 2
+BLEND_BAND_MID = (0.40, 0.25)    # 2 <= r < 17
+BLEND_BAND_LATE = (0.50, 0.15)   # r >= 17
 # Minimum pool rows for a fit: 5 for the one-feature and empirical fits,
 # 8 for the three-feature.
 MIN_ROWS_1F = 5
@@ -662,17 +682,26 @@ def forecast_case(case, name):
     hours = []
     for row in case.get("forecast") or []:
         h = row["hour"]
+        r = h - target_jump
+        # Hour-band blend weights (Round 7): early hours lean empirical,
+        # late hours lean the 1-feat regression; see BLEND_BAND_*.
+        if r < 2:
+            w1f, wemp = BLEND_BAND_EARLY
+        elif r < 17:
+            w1f, wemp = BLEND_BAND_MID
+        else:
+            w1f, wemp = BLEND_BAND_LATE
         comps = []
         c1 = component_1feat(p1, target_jump, pool, target, h)
         if c1 is not None:
-            comps.append((BLEND_W_1F, c1))
+            comps.append((w1f, c1))
         c3 = (component_3feat(p1, target_jump, pool, target, target_feats, h)
               if "ch1" in target_feats and "premed" in target_feats else None)
         if c3 is not None:
             comps.append((BLEND_W_3F, c3))
         ce = component_empirical(p1, target_jump, pool, target, h)
         if ce is not None:
-            comps.append((BLEND_W_EMP, ce))
+            comps.append((wemp, ce))
         if not comps:
             q = persistence_quantiles(p1, h)
         else:
@@ -685,7 +714,6 @@ def forecast_case(case, name):
             # launches (Round 6; see SPREAD_MULT), with the size
             # strength growing after the jump (Round 7; see
             # HOUR_SIZE_C). r = hour - jump hour, as in the experiments.
-            r = h - target_jump
             size_a = SIZE_SPREAD_A * (1.0 + HOUR_SIZE_C * max(0, r) / 22.0)
             smult = (SPREAD_MULT * (1.0 - 0.01 * max(0, r))
                      * (1.0 - size_a * math.tanh(math.log(p1 / 100000.0))))
