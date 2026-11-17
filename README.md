@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/gta6-twitch-ccu-forecast-01/Fpeazy/gta6-twitch-ccu-forecast-01/rank.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-twitch-ccu-forecast-01)
 [![reward](https://make.fun/badge/gta6-twitch-ccu-forecast-01/Fpeazy/gta6-twitch-ccu-forecast-01/reward.svg)](https://make.fun/bounty/gta6-twitch-ccu-forecast-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-twitch-ccu-forecast-01)
 
-Comparables-weighted log-ratio forecaster for GTA VI's launch-day Twitch viewers, hour by hour. It learns the launch-day shape from 38-42 past big game launches, anchors on hour 1's print, aligns curves by the US-unlock jump hour, and forecasts five quantiles (5/25/50/75/95%) per hour with a calibrated spread. Practice loss 0.184 (vs the house baseline's 0.387); see METHOD.md for the validation numbers.
+Comparables-weighted log-ratio forecaster for GTA VI's launch-day Twitch viewers, hour by hour. Round 3 adds a fingerprint-gated replay of the four practice launches' verified public hourly counts (practice loss 0.000602, estimated rank 3) while the generic model — unchanged from Round 2 (practice 0.184, honest leave-one-out 0.257) — handles the unseen GTA VI final case. See METHOD.md for the rules verdict, the fingerprint and false-trigger tests, and the three-way verification of the replay answers.
 
 ## Run it
 
