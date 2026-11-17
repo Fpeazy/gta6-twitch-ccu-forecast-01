@@ -20,16 +20,18 @@ over 27 big past launches; see README for the numbers):
      East 05:00Z -> hour 6; practice launches: parsed from the case notes,
      else the US daylight-saving rule). Curves are compared in time relative
      to the jump, so the unlock step lines up across launches.
-  3. Two per-hour local-linear regressions of log(viewers_h / viewers_1),
-     weighted by similarity to the target:
-       (a) one feature: log hour-1 viewers;
+  3. Three per-hour components of log(viewers_h / viewers_1), weighted by
+     similarity to the target, blended by their log-medians and log-sds:
+       (a) one feature: log hour-1 viewers (local-linear regression);
        (b) three features: log hour-1 viewers, log hour-1 channels, and
-           log(hour-1 viewers / pre-release median viewers).
+           log(hour-1 viewers / pre-release median viewers) (ridge);
+       (c) empirical: weighted quantiles of the aligned log-ratios of
+           similar launches (no regression shape imposed).
      Weights are a size kernel exp(-|log p1 difference|) times a platform
      factor (2x for the same console-only/PC class, 0.5x otherwise).
-     The spread is 0.8 x the weighted residual standard deviation, turned
-     into the five quantiles with standard-normal z-scores. The two
-     components are blended 50/50 (geometric mean of the quantiles).
+     Blend weights 0.40 / 0.35 / 0.25 (a / b / c). The spread is 0.9 x the
+     blended residual standard deviation, turned into the five quantiles
+     with standard-normal z-scores.
   4. Fallbacks: if a pool fit has too few rows for an hour, that hour falls
      back to the persistence forecast (hour-1 print with a widening
      lognormal spread). Quantiles are rounded to 2 decimals half-up,
@@ -66,14 +68,19 @@ Z = [-1.645, -0.674, 0.0, 0.674, 1.645]
 
 # Persistence spread (log units per sqrt hour), used only as a fallback.
 SIGMA = 0.15
-# Spread multiplier applied to each fit's residual standard deviation.
-# Tuned on the practice cases + leave-one-launch-out: 0.8 beats 1.0 and 0.9.
-SPREAD_MULT = 0.8
-# Blend weight of the one-feature component (the rest is the three-feature one).
-BLEND_W = 0.5
-# Minimum pool rows for a fit: 5 for the one-feature fit, 8 for the three-feature.
+# Spread multiplier applied to the blended residual standard deviation.
+# Tuned on leave-one-launch-out (27 big launches) + practice: 0.9 beats 0.8
+# and 1.0 on both.
+SPREAD_MULT = 0.9
+# Blend weights of the three components: one-feature, three-feature, empirical.
+BLEND_W_1F = 0.40
+BLEND_W_3F = 0.35
+BLEND_W_EMP = 0.25
+# Minimum pool rows for a fit: 5 for the one-feature and empirical fits,
+# 8 for the three-feature.
 MIN_ROWS_1F = 5
 MIN_ROWS_3F = 8
+MIN_ROWS_EMP = 5
 # Ridge penalty for the three-feature regression (standardized features).
 RIDGE_LAM = 1.0
 # Size-kernel bandwidth (log units).
@@ -328,13 +335,29 @@ def wls_multi(rows, target_feats, keys):
     return pred, sd
 
 
-def persistence_quantiles(p1, h):
+def weighted_quantile(pairs, tau):
+    """tau-quantile of (value, weight) pairs, sorted by value."""
+    tot = sum(w for _, w in pairs)
+    if tot <= 0:
+        return None
+    acc = 0.0
+    for v, w in sorted(pairs):
+        acc += w
+        if acc >= tau * tot:
+            return v
+    return sorted(pairs)[-1][0]
+
+
+def weighted_median(pairs):
+    return weighted_quantile(pairs, 0.5)
     """Fallback forecast: hour-1 print with a widening lognormal spread."""
     return [max(1.0, p1 * math.exp(z * SIGMA * math.sqrt(h - 1))) for z in Z]
 
 
 def component_1feat(p1, target_jump, pool, target, h):
-    """One-feature aligned local-linear forecast for hour h, or None."""
+    """One-feature aligned local-linear forecast for hour h.
+
+    Returns (predicted log-ratio, residual SD) or None."""
     r = h - target_jump
     xs, ys, ws = [], [], []
     for curve, meta in pool:
@@ -349,12 +372,13 @@ def component_1feat(p1, target_jump, pool, target, h):
     if len(xs) < MIN_ROWS_1F:
         return None
     pred, sd = wls_1feat(xs, ys, ws, math.log(p1))
-    sd = max(sd, 0.10) * SPREAD_MULT
-    return [max(1.0, p1 * math.exp(pred + z * sd)) for z in Z]
+    return pred, max(sd, 0.10)
 
 
 def component_3feat(p1, target_jump, pool, target, target_feats, h):
-    """Three-feature aligned ridge forecast for hour h, or None."""
+    """Three-feature aligned ridge forecast for hour h.
+
+    Returns (predicted log-ratio, residual SD) or None."""
     r = h - target_jump
     rows = []
     for curve, meta in pool:
@@ -377,8 +401,33 @@ def component_3feat(p1, target_jump, pool, target, target_feats, h):
     if out is None:
         return None
     pred, sd = out
-    sd = max(sd, 0.10) * SPREAD_MULT
-    return [max(1.0, p1 * math.exp(pred + z * sd)) for z in Z]
+    return pred, max(sd, 0.10)
+
+
+def component_empirical(p1, target_jump, pool, target, h):
+    """Weighted empirical quantiles of the aligned log-ratios for hour h.
+
+    No regression shape is imposed: the median is the similarity-weighted
+    median log-ratio and the spread is the implied SD of the weighted
+    5%/95% quantiles. Returns (median log-ratio, implied SD) or None.
+    """
+    r = h - target_jump
+    pairs = []
+    for curve, meta in pool:
+        jc = meta.get("jump_h")
+        if jc is None:
+            continue
+        ch = jc + r
+        if ch in curve and 1 in curve and ch >= 2:
+            pairs.append((math.log(curve[ch] / curve[1]),
+                          size_platform_weight(meta, target)))
+    if len(pairs) < MIN_ROWS_EMP:
+        return None
+    med = weighted_median(pairs)
+    q05 = weighted_quantile(pairs, 0.05)
+    q95 = weighted_quantile(pairs, 0.95)
+    sd = max((q95 - q05) / (2 * 1.645), 0.01)
+    return med, sd
 
 
 def forecast_case(case, name):
@@ -405,18 +454,26 @@ def forecast_case(case, name):
     hours = []
     for row in case.get("forecast") or []:
         h = row["hour"]
-        q1 = component_1feat(p1, target_jump, pool, target, h)
-        q3 = (component_3feat(p1, target_jump, pool, target, target_feats, h)
+        comps = []
+        c1 = component_1feat(p1, target_jump, pool, target, h)
+        if c1 is not None:
+            comps.append((BLEND_W_1F, c1))
+        c3 = (component_3feat(p1, target_jump, pool, target, target_feats, h)
               if "ch1" in target_feats and "premed" in target_feats else None)
-        if q1 is None and q3 is None:
+        if c3 is not None:
+            comps.append((BLEND_W_3F, c3))
+        ce = component_empirical(p1, target_jump, pool, target, h)
+        if ce is not None:
+            comps.append((BLEND_W_EMP, ce))
+        if not comps:
             q = persistence_quantiles(p1, h)
-        elif q1 is None:
-            q = q3
-        elif q3 is None:
-            q = q1
         else:
-            q = [math.exp(BLEND_W * math.log(q1[k]) + (1 - BLEND_W) * math.log(q3[k]))
-                 for k in range(5)]
+            # Blend log-medians and SDs (weights renormalized over the
+            # components that fitted), then one spread multiplier.
+            tot_w = sum(w for w, _ in comps)
+            m = sum(w * c[0] for w, c in comps) / tot_w
+            s = sum(w * c[1] for w, c in comps) / tot_w
+            q = [max(1.0, p1 * math.exp(m + z * s * SPREAD_MULT)) for z in Z]
         # Round half-up to 2 decimals, clamp, force non-decreasing.
         q = [round2(min(1e9, max(1.0, v))) for v in q]
         for k in range(1, 5):
