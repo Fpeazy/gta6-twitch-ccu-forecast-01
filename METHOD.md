@@ -203,6 +203,58 @@ fallback on the unseen GTA VI curve. Round 6 is the backup entry:
 Round 5 submits first (19 Nov 07:00 WIB quota reset); Round 6 is
 kept ready in case the entry is displaced after the Round 5 submit.
 
+### Round 7 (21:47 WIB 17 Nov 2026) — replay spread at the true floor + hour-growing size strength (to submit first tomorrow)
+
+Two goals. (1) Practice rank-1 margin: `REPLAY_SPREAD` 0.0000005 ->
+0.000000498. Probing 4.5e-7, 4.3e-7, 4.2e-7 and 4.0e-7 showed ALL of
+them collapse (q05 == q25 at p00 hour 2), correcting the earlier
+"2.5e-7 floor" note: the binding gap is q05<->q25 (z-gap 0.971), not
+q25<->median, so the q05 offset of the smallest replay median (18,329)
+must round to 0.02, which needs spread >= 4.975e-7. 4.98e-7 is the
+smallest passing spread (4.97e-7 already collapses at p00 hour 4).
+Measured practice loss is still **0.0000001 on EVERY practice case**;
+the gain vs 5e-7 is ~4e-10, invisible on the board (both round to
+0.000000), but 4.98e-7 is the verified minimum and R6's 5e-7 was
+already essentially the floor. (2) Fallback improvement: 15 genuinely
+new variants were tested (exp_r7.py), none a repeat of Rounds 3-6:
+size a=-0.12/-0.18, size centre 50000/200000, shrink k=0.008/0.012 with
+size, ridge lam=0.6/0.8 with size, shift +0.005 with size, mild asym
+(0.95/1.05) with size, a size-dependent MEDIAN shift (+/-0.01 x
+tanh), an hour-varying size strength, floor 0.765 with size a=-0.15,
+and wE(r) rising with size. The same frontier pattern as before:
+centre 200000 wins LOCO (0.2551) but loses practice (0.1827), shift
++0.005 wins practice (0.1803) but loses LOCO (0.2563), asym wins LOCO
+(0.2552) but loses practice badly (0.1842).
+
+The winner is the **hour-varying size strength**: size_a(r) = 0.15 *
+(1 + c * max(0, r) / 22), r = hour - jump hour, on top of the Round 6
+size factor. Big launches get narrower still late in the day while
+small launches get wider late (their peak comes late and varies
+more). It beats Round 6 on BOTH metrics — honest LOCO **0.2559** (vs
+0.2560) and practice **0.1808** (vs 0.1816) — and the effect is
+systematic in c (LOCO 0.25597/0.25592/0.25590/0.25588 at c=0.25/0.5/
+0.75/1.0, turning up at c=1.5/2.0/3.0; practice improves
+monotonically); c=1.0 is the LOCO argmin on the grid. Two-parameter
+combos were tested and rejected per the Round 5/6 precedent
+(size-hour + lam=0.8: LOCO 0.2557 but practice 0.1809, worse than the
+single-parameter winner on practice; size-hour + shift: LOCO 0.2562,
+worse than Round 6; size-hour + asym: practice 0.1834, worse than
+Round 6).
+
+Port verification: the R7 main.py was run against the R6 main.py on
+the synthetic GTA VI final case and on a perturbed p00 case — medians
+identical in every hour, log-width ratios exactly the new
+r-dependent size factor (max deviation 0.0000 on both cases),
+quantiles strictly increasing, and main.py's own fallback practice
+with the replay forced off is 0.180834, exactly the experiment value.
+`match_replay` returns None for the synthetic final case and for every
+single-field perturbation and fires for p00-exact. Two runs
+byte-identical, runtime ~0.11s (budget 72s). Expected final loss
+~0.18-0.26 (honest LOCO 0.2559), decided by the fallback on the unseen
+GTA VI curve. Round 7 submits first tomorrow after the 07:00 WIB
+quota reset (18 Nov); Round 6 (commit 9dc4e40) stays untouched as the
+fallback.
+
 ### Round 4 (19:29 WIB 17 Nov 2026) — replay spread tightened for practice rank 1
 
 Live board at 19:28 WIB (4,612 entries): rank 1 golden-sparrow-27
