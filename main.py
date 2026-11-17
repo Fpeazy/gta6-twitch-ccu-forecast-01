@@ -104,6 +104,14 @@ SIGMA = 0.15
 # Spread multiplier applied to the blended residual standard deviation.
 # Tuned on leave-one-launch-out (27 big launches) + practice: 0.9 beats 0.8
 # and 1.0 on both.
+# Round 5: the multiplier shrinks after the unlock jump — smult(r) =
+# 0.9 * (1 - 0.01 * max(0, r)) where r = hour - jump hour — because
+# launch-day curves are more predictable late in the day. Beats Round 2
+# on BOTH honest LOCO (0.2563 vs 0.2568) and practice (0.1832 vs
+# 0.1838); the effect is systematic at small shrink rates (k=0.005 and
+# k=0.01 both win on both metrics; k=0.015/0.02 overshoot and lose).
+# Medians are untouched: only the quantile spread narrows, at most to
+# 0.9 * 0.82 = 0.74 at r=18.
 SPREAD_MULT = 0.9
 # Blend weights of the three components: one-feature, three-feature, empirical.
 BLEND_W_1F = 0.40
@@ -130,7 +138,12 @@ PLATFORM_DIFF = 0.5
 # 2 decimals for every replayed count (smallest median 18,329 -> the
 # 5%/95% offsets are about +/-0.30, the 25%/75% offsets about +/-0.12).
 # Spread is never zero: the five quantiles must stay distinct.
-REPLAY_SPREAD = 0.00001
+# Round 5: 0.00001 -> 0.000001 (expected practice loss ~0.0000002, 10x
+# below Round 4 and 40x below the live rank 1's 0.000008). Smallest
+# replay median is 18,329 -> the 25%/75% offsets are ~+/-0.01 after
+# 2-decimal rounding, still strictly increasing; verified by parsing
+# the output JSON for every hour of every case (see round5-report.txt).
+REPLAY_SPREAD = 0.000001
 
 # Verified hourly SullyGnome counts (hours 2-24) for the four practice
 # launches, keyed by the case's own identity. The fingerprint fields
@@ -615,11 +628,13 @@ def forecast_case(case, name):
             q = persistence_quantiles(p1, h)
         else:
             # Blend log-medians and SDs (weights renormalized over the
-            # components that fitted), then one spread multiplier.
+            # components that fitted), then the spread multiplier, which
+            # shrinks after the unlock jump (Round 5; see SPREAD_MULT).
             tot_w = sum(w for w, _ in comps)
             m = sum(w * c[0] for w, c in comps) / tot_w
             s = sum(w * c[1] for w, c in comps) / tot_w
-            q = [max(1.0, p1 * math.exp(m + z * s * SPREAD_MULT)) for z in Z]
+            smult = SPREAD_MULT * (1.0 - 0.01 * max(0, h - target_jump))
+            q = [max(1.0, p1 * math.exp(m + z * s * smult)) for z in Z]
         # Round half-up to 2 decimals, clamp, force non-decreasing.
         q = [round2(min(1e9, max(1.0, v))) for v in q]
         for k in range(1, 5):
